@@ -22,11 +22,14 @@ jobs:
     - name: Configurar Gradle en el Servidor
       uses: gradle/actions/setup-gradle@v4
 
-    - name: Generar archivo Keystore para depuracion
+    - name: Forzar generacion de Keystore limpia
       run: |
-        # Decodificamos la clave base64 integrada para crear el archivo debug.keystore físico
-        echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" > debug.keystore.base64
-        base64 -d debug.keystore.base64 > debug.keystore || base64 --decode debug.keystore.base64 > debug.keystore
+        # Eliminamos cualquier rastro de la clave antigua que da error
+        rm -f debug.keystore
+        rm -f debug.keystore.base64
+        
+        # Usamos la herramienta nativa keytool de Java para crear una firma debug 100% nueva y compatible
+        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
     - name: Compilar la aplicacion con Gradle Nativo
       run: gradle assembleDebug
