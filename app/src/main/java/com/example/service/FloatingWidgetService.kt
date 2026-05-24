@@ -95,6 +95,11 @@ class FloatingWidgetService : Service() {
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
+        } else if (intent?.action == "com.example.service.PROCESS_URL") {
+            val url = intent.getStringExtra("url")
+            if (!url.isNullOrEmpty()) {
+                downloadVideoFromUrl(url)
+            }
         }
         return START_STICKY
     }
@@ -251,26 +256,19 @@ class FloatingWidgetService : Service() {
     }
 
     private fun onBubbleClicked() {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        if (!clipboard.hasPrimaryClip() || clipboard.primaryClipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == false) {
-            showPopupText("Copia un link (TikTok, YT, IG...)", 3000)
-            return
+        try {
+            val intent = Intent(this, ClipboardHandlerActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            showPopupText("Error al iniciar lector", 3500)
         }
+    }
 
-        val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-        if (clipText.isNullOrBlank()) {
-            showPopupText("El portapapeles está vacío", 3000)
-            return
-        }
-
-        // Extract any link from clipboard text
-        val url = extractUrl(clipText)
-        if (url == null) {
-            showPopupText("Copia un link válido", 3000)
-            return
-        }
-
-        // Call background API download
+    private fun downloadVideoFromUrl(url: String) {
         showPopupText("⚡ Analizando enlace...", 10000)
         
         serviceScope.launch {
@@ -300,29 +298,63 @@ class FloatingWidgetService : Service() {
                         showPopupText("❌ Error de conexión de TikTok", 3000)
                     }
                 } else {
-                    // Universal platform download using Cobalt API
-                    val response = withContext(Dispatchers.IO) {
-                        val cobaltRequest = com.example.data.CobaltRequest(url = url)
-                        NetworkClient.cobaltApi.getMediaData(cobaltRequest)
+                    // Universal platform download using Cobalt API with saved preferences and multi-server fallback
+                    val prefs = getSharedPreferences("downloader_settings", Context.MODE_PRIVATE)
+                    val quality = prefs.getString("pref_video_quality", "720") ?: "720"
+                    val audioOnly = prefs.getBoolean("pref_audio_only", false)
+                    val selectedServer = prefs.getString("pref_cobalt_server", "auto") ?: "auto"
+
+                    val cobaltRequest = com.example.data.CobaltRequest(
+                        url = url,
+                        videoQuality = quality,
+                        downloadMode = if (audioOnly) "audio" else "auto"
+                    )
+
+                    val serversToTry = if (selectedServer == "auto") {
+                        NetworkClient.cobaltServers.map { it.first }
+                    } else {
+                        val ordered = mutableListOf(selectedServer)
+                        NetworkClient.cobaltServers.map { it.first }.forEach {
+                            if (it != selectedServer) ordered.add(it)
+                        }
+                        ordered
                     }
 
-                    if (response.isSuccessful && response.body() != null) {
-                        val body = response.body()!!
-                        if (body.status == "error") {
-                            showPopupText("❌ Cobalt: ${body.text}", 3500)
-                        } else {
-                            val downloadUrl = body.url ?: body.picker?.firstOrNull()?.url
-                            if (!downloadUrl.isNullOrEmpty()) {
-                                val downloadService = VideoDownloadService(this@FloatingWidgetService)
-                                val title = body.text ?: "universal_quick_save"
-                                downloadService.downloadVideo(downloadUrl, title)
-                                showPopupText("¡Descargando contenido! 📥", 4000)
-                            } else {
-                                showPopupText("❌ No se encontró link de descarga", 3500)
+                    var downloadUrl: String? = null
+                    var title = "universal_quick_save"
+                    var lastError = "Todos los servidores de descarga saturados"
+
+                    withContext(Dispatchers.IO) {
+                        for (serverUrl in serversToTry) {
+                            try {
+                                val targetEndpoint = if (serverUrl.endsWith("/")) serverUrl else "$serverUrl/"
+                                val response = NetworkClient.cobaltApi.getMediaData(targetEndpoint, cobaltRequest)
+                                if (response.isSuccessful && response.body() != null) {
+                                    val body = response.body()!!
+                                    if (body.status != "error") {
+                                        downloadUrl = body.url ?: body.picker?.firstOrNull()?.url
+                                        if (!downloadUrl.isNullOrEmpty()) {
+                                            title = body.text ?: "universal_quick_save"
+                                            break
+                                        }
+                                    } else {
+                                        lastError = body.text ?: "Enlace no válido para este servidor"
+                                    }
+                                } else {
+                                    lastError = "Error temporal de red: ${response.code()}"
+                                }
+                            } catch (e: Exception) {
+                                lastError = e.localizedMessage ?: "Error de red"
                             }
                         }
+                    }
+
+                    if (!downloadUrl.isNullOrEmpty()) {
+                        val downloadService = VideoDownloadService(this@FloatingWidgetService)
+                        downloadService.downloadVideo(downloadUrl!!, title)
+                        showPopupText("¡Descargando contenido! 📥", 4000)
                     } else {
-                        showPopupText("❌ Error de servidor universal (${response.code()})", 3500)
+                        showPopupText("❌ Falló: $lastError - Abre la app para cambiar de servidor", 4000)
                     }
                 }
             } catch (e: Exception) {

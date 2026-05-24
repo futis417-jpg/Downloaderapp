@@ -77,15 +77,30 @@ data class CobaltResponse(
 )
 
 interface CobaltApi {
-    @retrofit2.http.POST("api/json")
+    @retrofit2.http.POST
     @retrofit2.http.Headers(
         "Accept: application/json",
-        "Content-Type: application/json"
+        "Content-Type: application/json",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Origin: https://cobalt.tools",
+        "Referer: https://cobalt.tools/"
     )
-    suspend fun getMediaData(@retrofit2.http.Body request: CobaltRequest): Response<CobaltResponse>
+    suspend fun getMediaData(
+        @retrofit2.http.Url url: String,
+        @retrofit2.http.Body request: CobaltRequest
+    ): Response<CobaltResponse>
 }
 
 object NetworkClient {
+    val cobaltServers = listOf(
+        "https://api.cobalt.tools/" to "Oficial (api.cobalt.tools)",
+        "https://cobalt.api.ryon.services/" to "Ryon Services (Recomendado)",
+        "https://cobalt.meowing.de/" to "Meowing DE (Altamente estable)",
+        "https://cobalt.hyper.rip/" to "Hyper Rip (Premium/Veloz)",
+        "https://co.wukko.me/" to "Wukko Direct",
+        "https://api.cobalt.black/" to "Cobalt Black"
+    )
+
     private val retrofit = Retrofit.Builder()
         .baseUrl("https://www.tikwm.com/")
         .addConverterFactory(MoshiConverterFactory.create())

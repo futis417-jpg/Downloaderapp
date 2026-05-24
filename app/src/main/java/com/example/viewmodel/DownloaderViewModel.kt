@@ -30,6 +30,32 @@ class DownloaderViewModel(application: Application) : AndroidViewModel(applicati
     private val historyAdapter = moshi.adapter(HistoryWrapper::class.java)
     private val historyFile = File(application.filesDir, "downloader_history.json")
 
+    private val prefs = application.getSharedPreferences("downloader_settings", android.content.Context.MODE_PRIVATE)
+
+    private val _videoQuality = MutableStateFlow(prefs.getString("pref_video_quality", "720") ?: "720")
+    val videoQuality: StateFlow<String> = _videoQuality
+
+    private val _audioOnly = MutableStateFlow(prefs.getBoolean("pref_audio_only", false))
+    val audioOnly: StateFlow<Boolean> = _audioOnly
+
+    private val _selectedCobaltServer = MutableStateFlow(prefs.getString("pref_cobalt_server", "auto") ?: "auto")
+    val selectedCobaltServer: StateFlow<String> = _selectedCobaltServer
+
+    fun setVideoQuality(quality: String) {
+        _videoQuality.value = quality
+        prefs.edit().putString("pref_video_quality", quality).apply()
+    }
+
+    fun setAudioOnly(enabled: Boolean) {
+        _audioOnly.value = enabled
+        prefs.edit().putBoolean("pref_audio_only", enabled).apply()
+    }
+
+    fun setSelectedCobaltServer(serverUrl: String) {
+        _selectedCobaltServer.value = serverUrl
+        prefs.edit().putString("pref_cobalt_server", serverUrl).apply()
+    }
+
     init {
         loadHistory()
     }
@@ -109,21 +135,53 @@ class DownloaderViewModel(application: Application) : AndroidViewModel(applicati
                         _uiState.value = DownloadUiState.Error("Error de conexión con TikTok: ${response.code()}")
                     }
                 } else {
-                    // Universal service using Cobalt API for YouTube, IG, Facebook, X, etc.
-                    val cobaltRequest = com.example.data.CobaltRequest(url = url)
-                    val response = NetworkClient.cobaltApi.getMediaData(cobaltRequest)
-                    if (response.isSuccessful && response.body() != null) {
-                        val body = response.body()!!
-                        if (body.status == "error") {
-                            _uiState.value = DownloadUiState.Error(body.text ?: "Cobalt no pudo resolver la dirección")
-                        } else {
-                            val mappedData = mapCobaltToTikVMData(url, body)
-                            _uiState.value = DownloadUiState.Success(mappedData)
-                            addHistoryItem(mappedData)
-                        }
+                    // Universal service using Cobalt API with robust multi-server fallback sequence
+                    val cobaltRequest = com.example.data.CobaltRequest(
+                        url = url,
+                        videoQuality = videoQuality.value,
+                        downloadMode = if (audioOnly.value) "audio" else "auto"
+                    )
+
+                    val selectedServer = selectedCobaltServer.value
+                    val serversToTry = if (selectedServer == "auto") {
+                        NetworkClient.cobaltServers.map { it.first }
                     } else {
-                        // Fallback attempt or display descriptive error
-                        _uiState.value = DownloadUiState.Error("Servidor universal no responde (${response.code()}). Verifica el link.")
+                        val ordered = mutableListOf(selectedServer)
+                        NetworkClient.cobaltServers.map { it.first }.forEach {
+                            if (it != selectedServer) ordered.add(it)
+                        }
+                        ordered
+                    }
+
+                    var lastError = "Todos los servidores de descarga universal están caídos o saturados. Intenta cambiar de servidor o reintentar."
+                    var processedSuccessfully = false
+
+                    for (serverUrl in serversToTry) {
+                        try {
+                            val targetEndpoint = if (serverUrl.endsWith("/")) serverUrl else "$serverUrl/"
+                            val response = NetworkClient.cobaltApi.getMediaData(targetEndpoint, cobaltRequest)
+                            if (response.isSuccessful && response.body() != null) {
+                                val body = response.body()!!
+                                if (body.status == "error") {
+                                    lastError = body.text ?: "El servidor no pudo procesar esta URL (Intenta con otro servidor)"
+                                    continue
+                                } else {
+                                    val mappedData = mapCobaltToTikVMData(url, body)
+                                    _uiState.value = DownloadUiState.Success(mappedData)
+                                    addHistoryItem(mappedData)
+                                    processedSuccessfully = true
+                                    break
+                                }
+                            } else {
+                                lastError = "El servidor respondió con código ${response.code()} (Reintentando alternativo...)"
+                            }
+                        } catch (e: Exception) {
+                            lastError = "Fallo de conexión al servidor alternativo: ${e.localizedMessage}"
+                        }
+                    }
+
+                    if (!processedSuccessfully) {
+                        _uiState.value = DownloadUiState.Error(lastError)
                     }
                 }
             } catch (e: Exception) {
