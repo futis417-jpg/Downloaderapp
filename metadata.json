@@ -1,0 +1,6 @@
+{
+  "name": "izi",
+  "description": "Descarga videos de redes sociales sin marca de agua.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
