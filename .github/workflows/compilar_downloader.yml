@@ -22,6 +22,12 @@ jobs:
     - name: Configurar Gradle en el Servidor
       uses: gradle/actions/setup-gradle@v4
 
+    - name: Generar archivo Keystore para depuracion
+      run: |
+        # Decodificamos la clave base64 integrada para crear el archivo debug.keystore físico
+        echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" > debug.keystore.base64
+        base64 -d debug.keystore.base64 > debug.keystore || base64 --decode debug.keystore.base64 > debug.keystore
+
     - name: Compilar la aplicacion con Gradle Nativo
       run: gradle assembleDebug
 
