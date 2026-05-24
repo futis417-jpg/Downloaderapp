@@ -1,0 +1,33 @@
+name: Compilar APK de Downloader
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Descargar el codigo del repositorio
+      uses: actions/checkout@v4
+
+    - name: Configurar Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Configurar Gradle en el Servidor
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Compilar la aplicacion con Gradle Nativo
+      run: gradle assembleDebug
+
+    - name: Guardar el archivo APK resultante
+      uses: actions/upload-artifact@v4
+      with:
+        name: VideoDownloader-APK
+        path: |
+          app/build/outputs/apk/debug/app-debug.apk
